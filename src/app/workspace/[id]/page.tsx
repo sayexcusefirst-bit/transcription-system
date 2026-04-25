@@ -233,18 +233,28 @@ export default function WorkspacePage() {
     setPageData((prev: any) => ({ ...prev, pasteEvents: (prev.pasteEvents || 0) + 1 }));
   };
 
-  // Extract rich HTML from PDF page preserving font size and boldness
+  // Extract rich HTML from PDF page preserving font size, boldness, and indentation
   async function extractHtmlFromPage(pageNum: number): Promise<string> {
     if (!pdfRef.current) return '';
     const page = await pdfRef.current.getPage(pageNum);
     const textContent = await page.getTextContent();
     
+    let minX = Infinity;
+    for (const item of textContent.items) {
+      if ('str' in item && item.str.trim().length > 0) {
+        minX = Math.min(minX, item.transform[4]);
+      }
+    }
+    if (minX === Infinity) minX = 0;
+
     let lastY: number | null = null;
     let html = '';
     let currentLine = '';
+    let currentLineX = 0;
     
     for (const item of textContent.items) {
       if ('str' in item) {
+        const x = Math.round(item.transform[4]);
         const y = Math.round(item.transform[5]);
         const size = Math.round(Math.sqrt(item.transform[0]*item.transform[0] + item.transform[1]*item.transform[1])) || 12;
         const isBold = item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('black');
@@ -252,17 +262,23 @@ export default function WorkspacePage() {
         const style = `font-size: ${size}px; font-weight: ${isBold ? 'bold' : 'normal'};`;
         
         if (lastY !== null && Math.abs(y - lastY) > 5) {
-          html += `<div>${currentLine}</div>`;
+          const indent = Math.max(0, currentLineX - minX);
+          html += `<div style="margin-left: ${Math.round(indent)}px;">${currentLine}</div>`;
           currentLine = '';
-        } else if (lastY !== null && currentLine.length > 0 && !item.str.startsWith(' ')) {
-          currentLine += ' ';
+          currentLineX = x;
+        } else {
+          if (currentLine === '') currentLineX = x;
+          if (lastY !== null && currentLine.length > 0 && !item.str.startsWith(' ')) {
+            currentLine += ' ';
+          }
         }
         currentLine += `<span style="${style}">${item.str}</span>`;
         lastY = y;
       }
     }
     if (currentLine) {
-        html += `<div>${currentLine}</div>`;
+        const indent = Math.max(0, currentLineX - minX);
+        html += `<div style="margin-left: ${Math.round(indent)}px;">${currentLine}</div>`;
     }
     
     return html;
@@ -312,40 +328,23 @@ export default function WorkspacePage() {
       const totalChars = tempDiv.textContent?.length || 1;
       let typedChars = 0;
 
-      for (const lineNode of Array.from(tempDiv.childNodes)) {
+      const lines = Array.from(tempDiv.childNodes);
+      const totalLines = lines.length || 1;
+      let typedLines = 0;
+
+      for (const lineNode of lines) {
         if (!typingRef.current) break;
-        const targetLine = document.createElement('div');
+        
+        const targetLine = lineNode.cloneNode(true) as HTMLElement;
         editor.appendChild(targetLine);
         
-        if (lineNode.childNodes.length === 0) {
-           targetLine.innerHTML = '<br>';
-           continue;
-        }
-
-        for (const spanNode of Array.from(lineNode.childNodes)) {
-           if (!typingRef.current) break;
-           if (spanNode.nodeType === Node.TEXT_NODE) continue;
-           const el = spanNode as HTMLElement;
-           const targetSpan = document.createElement('span');
-           targetSpan.style.cssText = el.style.cssText;
-           targetLine.appendChild(targetSpan);
-           
-           const text = el.textContent || '';
-           let charCount = 0;
-           for (const char of text) {
-             if (!typingRef.current) break;
-             targetSpan.textContent += char;
-             typedChars++;
-             charCount++;
-             
-             // Update UI and yield every 10 characters for maximum speed while still animating
-             if (charCount % 10 === 0 || typedChars === totalChars) {
-                 setTypingProgress(Math.round((typedChars / totalChars) * 100));
-                 if (editor) editor.scrollTop = editor.scrollHeight;
-                 await new Promise(r => setTimeout(r, 0));
-             }
-           }
-        }
+        typedLines++;
+        setTypingProgress(Math.round((typedLines / totalLines) * 100));
+        
+        if (editor) editor.scrollTop = editor.scrollHeight;
+        
+        // Fast line-by-line injection
+        await new Promise(r => setTimeout(r, 2));
       }
       
       if (typingRef.current) {
@@ -426,6 +425,12 @@ export default function WorkspacePage() {
          }));
       } else {
         Array.from(div.children).forEach(lineNode => {
+          const elLine = lineNode as HTMLElement;
+          const marginLeftMatch = elLine.style?.marginLeft?.match(/(\d+)px/);
+          const indentPixels = marginLeftMatch ? parseInt(marginLeftMatch[1]) : 0;
+          // Twips conversion (1px ~ 12 twips, adjust multiplier for visual match)
+          const leftIndent = indentPixels * 12;
+
           const runs: any[] = [];
           Array.from(lineNode.childNodes).forEach(node => {
             if (node.nodeType === Node.TEXT_NODE) {
@@ -447,7 +452,10 @@ export default function WorkspacePage() {
           });
           
           if (runs.length > 0) {
-             paragraphs.push(new Paragraph({ children: runs }));
+             paragraphs.push(new Paragraph({ 
+               children: runs,
+               indent: { left: leftIndent }
+             }));
           } else {
              paragraphs.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
           }
