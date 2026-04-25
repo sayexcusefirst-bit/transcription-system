@@ -42,7 +42,7 @@ export default function WorkspacePage() {
   const [showFocusMode, setShowFocusMode] = useState(false);
   const [focusPosition, setFocusPosition] = useState(100); // Percentage or px
   const [fontLoaded, setFontLoaded] = useState(true);
-  const [checklist, setChecklist] = useState({
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({
     allLines: false,
     lineBreaks: false,
     symbols: false,
@@ -494,7 +494,7 @@ export default function WorkspacePage() {
               )}
             </span>
             <div className="flex gap-4">
-              <span>L: {pageData?.rawText.split('\n').filter(l => l.length > 0).length || 0}</span>
+              <span>L: {pageData?.rawText.split('\n').filter((l: string) => l.length > 0).length || 0}</span>
               <span>C: {pageData?.rawText.length || 0}</span>
             </div>
           </div>
