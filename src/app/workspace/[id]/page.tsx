@@ -224,33 +224,39 @@ export default function WorkspacePage() {
     setPageData((prev: any) => ({ ...prev, pasteEvents: (prev.pasteEvents || 0) + 1 }));
   };
 
-  // Extract text from PDF page (NOT OCR - reads embedded text data)
-  async function extractTextFromPage(pageNum: number): Promise<string> {
+  // Extract rich HTML from PDF page preserving font size and boldness
+  async function extractHtmlFromPage(pageNum: number): Promise<string> {
     if (!pdfRef.current) return '';
     const page = await pdfRef.current.getPage(pageNum);
     const textContent = await page.getTextContent();
     
-    // Reconstruct text with line breaks based on Y position changes
     let lastY: number | null = null;
-    let text = '';
+    let html = '';
+    let currentLine = '';
     
     for (const item of textContent.items) {
       if ('str' in item) {
         const y = Math.round(item.transform[5]);
+        const size = Math.round(Math.sqrt(item.transform[0]*item.transform[0] + item.transform[1]*item.transform[1])) || 12;
+        const isBold = item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('black');
+        
+        const style = `font-size: ${size}px; font-weight: ${isBold ? 'bold' : 'normal'};`;
+        
         if (lastY !== null && Math.abs(y - lastY) > 5) {
-          text += '\n';
-        } else if (lastY !== null && text.length > 0 && !text.endsWith('\n')) {
-          // Same line - add space between items if needed
-          if (item.str.length > 0) {
-            text += ' ';
-          }
+          html += `<div>${currentLine}</div>`;
+          currentLine = '';
+        } else if (lastY !== null && currentLine.length > 0 && !item.str.startsWith(' ')) {
+          currentLine += ' ';
         }
-        text += item.str;
+        currentLine += `<span style="${style}">${item.str}</span>`;
         lastY = y;
       }
     }
+    if (currentLine) {
+        html += `<div>${currentLine}</div>`;
+    }
     
-    return text.trim();
+    return html;
   }
 
   // Simulate fast typing animation
@@ -270,9 +276,9 @@ export default function WorkspacePage() {
   async function autoTypePage(pageNum: number) {
     if (!typingRef.current) return;
 
-    // Extract text for this specific page
-    const fullText = await extractTextFromPage(pageNum);
-    if (!fullText) {
+    // Extract rich html for this specific page
+    const fullHtml = await extractHtmlFromPage(pageNum);
+    if (!fullHtml) {
       alert(`No text found on page ${pageNum}. The page may be a scanned image.`);
       typingRef.current = false;
       setIsTyping(false);
@@ -288,23 +294,51 @@ export default function WorkspacePage() {
     // Render the PDF page
     renderPdfPage(pageNum, true);
 
-    const startIndex = freshPageData?.rawText?.length || 0;
-    let currentText = freshPageData?.rawText || '';
+    const editor = editorRef.current as any;
+    if (editor) {
+      editor.innerHTML = '';
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = fullHtml;
+      
+      const totalChars = tempDiv.textContent?.length || 1;
+      let typedChars = 0;
 
-    for (let i = startIndex; i < fullText.length; i++) {
-      if (!typingRef.current) break;
+      for (const lineNode of Array.from(tempDiv.childNodes)) {
+        if (!typingRef.current) break;
+        const targetLine = document.createElement('div');
+        editor.appendChild(targetLine);
+        
+        if (lineNode.childNodes.length === 0) {
+           targetLine.innerHTML = '<br>';
+           continue;
+        }
 
-      currentText += fullText[i];
-      setPageData((prev: any) => ({ ...prev, rawText: currentText }));
-      setTypingProgress(Math.round(((i + 1) / fullText.length) * 100));
-
-      if (editorRef.current) {
-        editorRef.current.scrollTop = editorRef.current.scrollHeight;
+        for (const spanNode of Array.from(lineNode.childNodes)) {
+           if (!typingRef.current) break;
+           if (spanNode.nodeType === Node.TEXT_NODE) continue;
+           const el = spanNode as HTMLElement;
+           const targetSpan = document.createElement('span');
+           targetSpan.style.cssText = el.style.cssText;
+           targetLine.appendChild(targetSpan);
+           
+           const text = el.textContent || '';
+           for (const char of text) {
+             if (!typingRef.current) break;
+             targetSpan.textContent += char;
+             typedChars++;
+             setTypingProgress(Math.round((typedChars / totalChars) * 100));
+             
+             if (editor) editor.scrollTop = editor.scrollHeight;
+             
+             const delay = char === '\n' ? 30 : 5 + Math.random() * 10;
+             await new Promise(r => setTimeout(r, delay));
+           }
+        }
       }
-
-      // Fast typing speed
-      const delay = fullText[i] === '\n' ? 30 : 5 + Math.random() * 10;
-      await new Promise(r => setTimeout(r, delay));
+      
+      if (typingRef.current) {
+         setPageData((prev: any) => ({ ...prev, rawText: editor.innerHTML }));
+      }
     }
 
     // Save completed page
@@ -313,7 +347,7 @@ export default function WorkspacePage() {
       id: `${id}_${pageNum}`,
       documentId: id,
       pageNumber: pageNum,
-      rawText: currentText,
+      rawText: editor ? editor.innerHTML : '',
       isCompleted: true,
       completedAt: Date.now(),
       timeSpent: (freshPageData?.timeSpent || 0),
@@ -369,18 +403,44 @@ export default function WorkspacePage() {
     const sortedPages = freshPages.sort((a, b) => a.pageNumber - b.pageNumber);
     
     const sections = sortedPages.map((p, pageIndex) => {
-      const lines = (p.rawText || '').split('\n');
-      const paragraphs = lines.map(line => 
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: line,
-              font: 'Krishna Wide Regular',
-              size: 24, // 12pt
-            })
-          ]
-        })
-      );
+      const div = document.createElement('div');
+      div.innerHTML = p.rawText || '';
+      
+      const paragraphs: any[] = [];
+      
+      if (div.children.length === 0 && div.textContent) {
+         paragraphs.push(new Paragraph({
+           children: [new TextRun({ text: div.textContent, font: 'Krishna Wide Regular', size: 24 })]
+         }));
+      } else {
+        Array.from(div.children).forEach(lineNode => {
+          const runs: any[] = [];
+          Array.from(lineNode.childNodes).forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+               if (node.textContent?.trim()) {
+                 runs.push(new TextRun({ text: node.textContent, font: 'Krishna Wide Regular', size: 24 }));
+               }
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+               const el = node as HTMLElement;
+               const fontSizeMatch = el.style.fontSize.match(/(\d+)px/);
+               const size = fontSizeMatch ? parseInt(fontSizeMatch[1]) * 2 : 24; // docx uses half-points
+               const bold = el.style.fontWeight === 'bold';
+               runs.push(new TextRun({ 
+                 text: el.innerText || el.textContent || '', 
+                 font: 'Krishna Wide Regular', 
+                 size, 
+                 bold 
+               }));
+            }
+          });
+          
+          if (runs.length > 0) {
+             paragraphs.push(new Paragraph({ children: runs }));
+          } else {
+             paragraphs.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
+          }
+        });
+      }
 
       return {
         properties: pageIndex > 0 ? { page: { } } : {},
@@ -494,8 +554,8 @@ export default function WorkspacePage() {
               )}
             </span>
             <div className="flex gap-4">
-              <span>L: {pageData?.rawText.split('\n').filter((l: string) => l.length > 0).length || 0}</span>
-              <span>C: {pageData?.rawText.length || 0}</span>
+              <span>L: {pageData?.rawText?.includes('<div') ? (pageData.rawText.match(/<div/g) || []).length : (pageData?.rawText?.split('\n').filter((l: string) => l.length > 0).length || 0)}</span>
+              <span>C: {pageData?.rawText?.replace(/<[^>]*>?/gm, '').length || 0}</span>
             </div>
           </div>
           <div className="flex-1 relative">
@@ -504,18 +564,17 @@ export default function WorkspacePage() {
                 <AlertCircle size={10} /> Paste Detected
               </div>
             )}
-            <textarea
-              ref={editorRef}
-              value={pageData?.rawText || ''}
-              onChange={handleTextChange}
+            <div
+              ref={editorRef as any}
+              contentEditable
+              onInput={(e) => {
+                setPageData((prev: any) => ({ ...prev, rawText: e.currentTarget.innerHTML }));
+              }}
               onPaste={handlePaste}
               spellCheck={false}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              className="w-full h-full p-8 bg-transparent outline-none resize-none leading-relaxed text-xl"
+              className="w-full h-full p-8 bg-transparent outline-none overflow-auto leading-relaxed"
               style={{ fontFamily: 'KrishnaWide, serif' }}
-              placeholder="Type exactly as seen in the source..."
+              dangerouslySetInnerHTML={{ __html: pageData?.rawText || '' }}
             />
           </div>
         </div>
@@ -611,8 +670,9 @@ export default function WorkspacePage() {
             <div className="p-6 space-y-3 max-h-60 overflow-auto">
               <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral-500 mb-3">Verification Summary</h3>
               {allPages.sort((a, b) => a.pageNumber - b.pageNumber).map(p => {
-                const lines = p.rawText ? p.rawText.split('\n').filter((l: string) => l.length > 0).length : 0;
-                const chars = p.rawText ? p.rawText.length : 0;
+                const plainText = p.rawText ? p.rawText.replace(/<[^>]*>?/gm, '') : '';
+                const lines = p.rawText?.includes('<div') ? (p.rawText.match(/<div/g) || []).length : (p.rawText ? p.rawText.split('\n').filter((l: string) => l.length > 0).length : 0);
+                const chars = plainText.length;
                 return (
                   <div key={p.pageNumber} className="flex items-center justify-between p-3 bg-neutral-800/50 rounded-xl">
                     <div className="flex items-center gap-3">
