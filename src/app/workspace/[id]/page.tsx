@@ -240,12 +240,24 @@ export default function WorkspacePage() {
     const textContent = await page.getTextContent();
     
     let minX = Infinity;
+    const sizeCounts: Record<number, number> = {};
     for (const item of textContent.items) {
       if ('str' in item && item.str.trim().length > 0) {
         minX = Math.min(minX, item.transform[4]);
+        const s = Math.round(item.height || item.transform[3] || 12);
+        sizeCounts[s] = (sizeCounts[s] || 0) + 1;
       }
     }
     if (minX === Infinity) minX = 0;
+    
+    let bodySize = 12;
+    let maxCount = 0;
+    for (const [s, count] of Object.entries(sizeCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        bodySize = parseInt(s);
+      }
+    }
 
     let lastY: number | null = null;
     let html = '';
@@ -256,8 +268,23 @@ export default function WorkspacePage() {
       if ('str' in item) {
         const x = Math.round(item.transform[4]);
         const y = Math.round(item.transform[5]);
-        const size = Math.round(Math.sqrt(item.transform[0]*item.transform[0] + item.transform[1]*item.transform[1])) || 12;
-        const isBold = item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('black');
+        
+        let size = Math.round(item.height || item.transform[3] || 12);
+        let isBold = item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('black');
+        
+        if (textContent.styles && textContent.styles[item.fontName]) {
+            const family = textContent.styles[item.fontName].fontFamily || '';
+            if (family.toLowerCase().includes('bold')) isBold = true;
+        }
+        
+        if (item.transform[0] > (item.transform[3] || 12) * 1.05) isBold = true;
+        
+        if (size > bodySize) {
+            isBold = true;
+            size = size + 2; 
+        } else {
+            size = bodySize; 
+        }
         
         const style = `font-size: ${size}px; font-weight: ${isBold ? 'bold' : 'normal'};`;
         
