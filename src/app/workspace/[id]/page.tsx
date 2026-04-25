@@ -420,16 +420,22 @@ export default function WorkspacePage() {
       const paragraphs: any[] = [];
       
       if (div.children.length === 0 && div.textContent) {
-         paragraphs.push(new Paragraph({
-           children: [new TextRun({ text: div.textContent, font: 'Krishna Wide Regular', size: 24 })]
-         }));
+         const lines = (p.rawText || '').split('\n');
+         lines.forEach(line => {
+           if (line.trim().length > 0) {
+             paragraphs.push(new Paragraph({
+               children: [new TextRun({ text: line, font: 'Krishna Wide Regular', size: 24 })]
+             }));
+           }
+         });
       } else {
         Array.from(div.children).forEach(lineNode => {
           const elLine = lineNode as HTMLElement;
-          const marginLeftMatch = elLine.style?.marginLeft?.match(/(\d+)px/);
+          const styleAttrLine = elLine.getAttribute('style') || '';
+          const marginLeftMatch = styleAttrLine.match(/margin-left:\s*(\d+)px/);
           const indentPixels = marginLeftMatch ? parseInt(marginLeftMatch[1]) : 0;
-          // Twips conversion (1px ~ 12 twips, adjust multiplier for visual match)
-          const leftIndent = indentPixels * 12;
+          // Twips conversion (1px ~ 20 twips, strict standard)
+          const leftIndent = indentPixels * 20;
 
           const runs: any[] = [];
           Array.from(lineNode.childNodes).forEach(node => {
@@ -439,11 +445,12 @@ export default function WorkspacePage() {
                }
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                const el = node as HTMLElement;
-               const fontSizeMatch = el.style.fontSize.match(/(\d+)px/);
+               const styleAttrSpan = el.getAttribute('style') || '';
+               const fontSizeMatch = styleAttrSpan.match(/font-size:\s*(\d+)px/);
                const size = fontSizeMatch ? parseInt(fontSizeMatch[1]) * 2 : 24; // docx uses half-points
-               const bold = el.style.fontWeight === 'bold';
+               const bold = styleAttrSpan.includes('bold') || styleAttrSpan.includes('700');
                runs.push(new TextRun({ 
-                 text: el.innerText || el.textContent || '', 
+                 text: el.textContent || '', 
                  font: 'Krishna Wide Regular', 
                  size, 
                  bold 
@@ -594,7 +601,7 @@ export default function WorkspacePage() {
               }}
               onPaste={handlePaste}
               spellCheck={false}
-              className="w-full h-full p-8 bg-transparent outline-none overflow-auto leading-relaxed"
+              className="w-full h-full p-8 bg-transparent outline-none overflow-auto leading-relaxed whitespace-pre-wrap"
               style={{ fontFamily: 'KrishnaWide, serif' }}
               // Intentionally omitting dangerouslySetInnerHTML to prevent React from wiping DOM during auto-type
             />
