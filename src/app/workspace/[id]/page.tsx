@@ -118,6 +118,15 @@ export default function WorkspacePage() {
     }
   }, [isLoading, needsFirstRender]);
 
+  // Sync contentEditable DOM manually to avoid React overwrite during animation
+  useEffect(() => {
+    if (editorRef.current && !isTyping) {
+      if (editorRef.current.innerHTML !== (pageData?.rawText || '')) {
+        editorRef.current.innerHTML = pageData?.rawText || '';
+      }
+    }
+  }, [pageData?.rawText, isTyping, currentPageNum]);
+
   async function loadPage(num: number) {
     if (!pdfRef.current) return;
     
@@ -322,16 +331,19 @@ export default function WorkspacePage() {
            targetLine.appendChild(targetSpan);
            
            const text = el.textContent || '';
+           let charCount = 0;
            for (const char of text) {
              if (!typingRef.current) break;
              targetSpan.textContent += char;
              typedChars++;
-             setTypingProgress(Math.round((typedChars / totalChars) * 100));
+             charCount++;
              
-             if (editor) editor.scrollTop = editor.scrollHeight;
-             
-             const delay = char === '\n' ? 30 : 5 + Math.random() * 10;
-             await new Promise(r => setTimeout(r, delay));
+             // Update UI and yield every 10 characters for maximum speed while still animating
+             if (charCount % 10 === 0 || typedChars === totalChars) {
+                 setTypingProgress(Math.round((typedChars / totalChars) * 100));
+                 if (editor) editor.scrollTop = editor.scrollHeight;
+                 await new Promise(r => setTimeout(r, 0));
+             }
            }
         }
       }
@@ -568,13 +580,15 @@ export default function WorkspacePage() {
               ref={editorRef as any}
               contentEditable
               onInput={(e) => {
-                setPageData((prev: any) => ({ ...prev, rawText: e.currentTarget.innerHTML }));
+                if (!isTyping) {
+                  setPageData((prev: any) => ({ ...prev, rawText: e.currentTarget.innerHTML }));
+                }
               }}
               onPaste={handlePaste}
               spellCheck={false}
               className="w-full h-full p-8 bg-transparent outline-none overflow-auto leading-relaxed"
               style={{ fontFamily: 'KrishnaWide, serif' }}
-              dangerouslySetInnerHTML={{ __html: pageData?.rawText || '' }}
+              // Intentionally omitting dangerouslySetInnerHTML to prevent React from wiping DOM during auto-type
             />
           </div>
         </div>
