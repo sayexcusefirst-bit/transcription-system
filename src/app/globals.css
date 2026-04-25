@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'KrishnaWide';
+  src: url('/fonts/KrishnaWide.ttf') format('truetype');
+  font-display: swap;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom scrollbar for the workspace */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #171717; 
+}
+::-webkit-scrollbar-thumb {
+  background: #404040; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #525252; 
+}
